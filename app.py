@@ -1,6 +1,6 @@
-import os, asyncio
-from multiprocessing import Process
-from flask import Flask
+import os, threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -8,7 +8,20 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN is not set")
 
-# ---------- Telegram bot ----------
+PORT = int(os.getenv("PORT", "10000"))
+
+# ---------- health-check HTTP server (для Render) ----------
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+def start_health_server():
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    server.serve_forever()
+
+# ---------- Telegram handlers ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Я УчБотик 🤖 Пришли текст или фото задачи.")
 
@@ -19,26 +32,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Фото получил ✅. Анализ картинок добавим позже.")
 
 async def bot_main():
-    app_tg = ApplicationBuilder().token(TOKEN).build()
-    app_tg.add_handler(CommandHandler("start", start))
-    app_tg.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    # без сигналов — они у gunicorn
-    await app_tg.run_polling(stop_signals=None)
-
-def _bot_process():
-    asyncio.run(bot_main())
-
-# ---------- Flask (health-check для Render) ----------
-app = Flask(__name__)
-
-@app.get("/")
-def health():
-    return "ok", 200
-
-# Стартуем БОТА в отдельном процессе сразу при импорте модуля
-_bot = Process(target=_bot_process, daemon=True)
-_bot.start()
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    await app.run_polling()  # бот в главном потоке, сигналы ок
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+    # health-сервер на $PORT в отдельном потоке
+    threading.Thread(target=start_health_server, daemon=True).start()
+    # бот в главном потоке
+    asyncio.run(bot_main())

@@ -25,7 +25,7 @@ async def bot_main():
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     # один вызов — сам запустит polling и корректно закроется
-    await application.run_polling()
+    await application.run_polling(stop_signals=None)
 
 def run_bot_in_thread():
     asyncio.run(bot_main())

@@ -1,28 +1,21 @@
 import os
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from aiohttp import web
 
-# --- настройки ---
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN is not set")
+
 PORT = int(os.getenv("PORT", "10000"))
+# Render сам выставляет эту переменную с твоим публичным URL (например https://uchbotik.onrender.com)
+PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
+if not PUBLIC_URL:
+    # если вдруг переменной нет, можно захардкодить свой URL:
+    # PUBLIC_URL = "https://uchbotik.onrender.com"
+    raise RuntimeError("RENDER_EXTERNAL_URL is not set")
 
-# --- health-check HTTP server на $PORT (для Render) ---
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_HEAD(self):
-        self.send_response(200); self.end_headers()
-    def do_GET(self):
-        self.send_response(200); self.end_headers()
-        self.wfile.write(b"ok")
-
-def start_health_server():
-    HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever()
-
-# --- Telegram handlers (async — это норм для PTB v21) ---
+# ---------- handlers ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Я УчБотик 🤖 Пришли текст или фото задачи.")
 
@@ -32,18 +25,38 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Фото получил ✅. Анализ картинок добавим позже.")
 
-def main():
-    # поднимаем health-сервер в фоне
-    threading.Thread(target=start_health_server, daemon=True).start()
+async def main():
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # собираем и запускаем Телеграм-бот
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # ---------- aiohttp-приложение для вебхука + health ----------
+    web_app = web.Application()
 
-    # ВАЖНО: синхронный запуск без asyncio.run и без сигналов
-    app.run_polling(stop_signals=None)
+    # health-check для Render (HEAD/GET на "/")
+    async def health(request: web.Request):
+        return web.Response(text="ok")
+    web_app.router.add_get("/", health)
+    web_app.router.add_head("/", health)
+
+    # Пусть вебхук ходит на https://<твой-домен>/<токен>
+    webhook_path = f"/{TOKEN}"
+    webhook_url = f"{PUBLIC_URL}{webhook_path}"
+
+    # 1) регистрируем вебхук в Telegram
+    await application.bot.set_webhook(url=webhook_url)
+
+    # 2) запускаем webhook-сервер (PTB сам принимает POST от Telegram)
+    await application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TOKEN,      # тот же путь, что и в webhook_url
+        webhook_url=webhook_url,
+        web_app=web_app,     # даём наш aiohttp app (там обработчик "/" для Render)
+        drop_pending_updates=True
+    )
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())

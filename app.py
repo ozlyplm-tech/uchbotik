@@ -1,4 +1,5 @@
-import os, threading, asyncio
+import os, asyncio
+from multiprocessing import Process
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
@@ -7,9 +8,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN is not set")
 
-app = Flask(__name__)
-
-# ---- handlers ----
+# ---------- Telegram bot ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Я УчБотик 🤖 Пришли текст или фото задачи.")
 
@@ -20,23 +19,26 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Фото получил ✅. Анализ картинок добавим позже.")
 
 async def bot_main():
-    application = ApplicationBuilder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    # один вызов — сам запустит polling и корректно закроется
-    await application.run_polling(stop_signals=None)
+    app_tg = ApplicationBuilder().token(TOKEN).build()
+    app_tg.add_handler(CommandHandler("start", start))
+    app_tg.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # без сигналов — они у gunicorn
+    await app_tg.run_polling(stop_signals=None)
 
-def run_bot_in_thread():
+def _bot_process():
     asyncio.run(bot_main())
 
-# запускаем бота в фоне
-threading.Thread(target=run_bot_in_thread, daemon=True).start()
+# ---------- Flask (health-check для Render) ----------
+app = Flask(__name__)
 
-# health-check для Render
 @app.get("/")
 def health():
     return "ok", 200
+
+# Стартуем БОТА в отдельном процессе сразу при импорте модуля
+_bot = Process(target=_bot_process, daemon=True)
+_bot.start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))

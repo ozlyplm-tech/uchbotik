@@ -1,6 +1,7 @@
 import os, threading
 from flask import Flask
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
@@ -8,35 +9,35 @@ if not TOKEN:
 
 app = Flask(__name__)
 
-# --- Telegram bot handlers ---
-def start(update, context):
-    update.message.reply_text("Привет! Я УчБотик 🤖 Напиши тему или пришли фото задачи.")
+# --- handlers ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Я УчБотик 🤖 Пришли текст или фото задачи.")
 
-def handle_text(update, context):
-    update.message.reply_text("Принял! Скоро научусь объяснять подробно ✍️")
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Принял текст ✅. Скоро будет подробный разбор!")
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Фото получил ✅. Анализ картинок добавим позже.")
 
 def run_bot():
-    updater = Updater(TOKEN)
-    dp = updater.dispatcher
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
-    updater.start_polling()
-    updater.idle()
+    bot = ApplicationBuilder().token(TOKEN).build()
+    bot.add_handler(CommandHandler("start", start))
+    bot.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    bot.run_polling()
 
-# --- Web health endpoint for Render ---
+# --- health-check для Render ---
 @app.get("/")
 def health():
     return "ok", 200
 
-# Запускаем Telegram-бот в отдельном потоке при старте веб-приложения
-bot_thread_started = False
+_started = False
 @app.before_first_request
-def start_bot_thread():
-    global bot_thread_started
-    if not bot_thread_started:
+def _start():
+    global _started
+    if not _started:
         threading.Thread(target=run_bot, daemon=True).start()
-        bot_thread_started = True
+        _started = True
 
-# Локальный запуск (не обязателен на Render)
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))

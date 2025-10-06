@@ -13,9 +13,10 @@ PORT = int(os.getenv("PORT", "10000"))
 
 # --- health-check HTTP server на $PORT (для Render) ---
 class HealthHandler(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self.send_response(200); self.end_headers()
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
+        self.send_response(200); self.end_headers()
         self.wfile.write(b"ok")
 
 def start_health_server():

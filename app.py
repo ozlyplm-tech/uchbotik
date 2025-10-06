@@ -1,4 +1,5 @@
-import os, threading
+import os
+import threading
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
@@ -9,7 +10,7 @@ if not TOKEN:
 
 app = Flask(__name__)
 
-# --- handlers ---
+# ----- Telegram handlers -----
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Я УчБотик 🤖 Пришли текст или фото задачи.")
 
@@ -26,18 +27,15 @@ def run_bot():
     bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     bot.run_polling()
 
-# --- health-check для Render ---
+# ----- Health-check endpoint для Render -----
 @app.get("/")
 def health():
     return "ok", 200
 
-_started = False
-@app.before_first_request
-def _start():
-    global _started
-    if not _started:
-        threading.Thread(target=run_bot, daemon=True).start()
-        _started = True
+# Стартуем поток бота сразу при загрузке модуля
+# (на Render с gunicorn по умолчанию 1 воркер → один поток бота)
+_bot_thread = threading.Thread(target=run_bot, daemon=True)
+_bot_thread.start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))

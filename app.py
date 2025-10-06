@@ -9,7 +9,7 @@ if not TOKEN:
 
 app = Flask(__name__)
 
-# ---- Telegram handlers ----
+# ---- handlers ----
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Я УчБотик 🤖 Пришли текст или фото задачи.")
 
@@ -19,25 +19,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Фото получил ✅. Анализ картинок добавим позже.")
 
-async def _bot_runner():
+async def bot_main():
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    # корректный async-жизненный цикл
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    await application.updater.wait_until_closed()
+    # один вызов — сам запустит polling и корректно закроется
+    await application.run_polling()
 
 def run_bot_in_thread():
-    asyncio.run(_bot_runner())
+    asyncio.run(bot_main())
 
-# стартуем бота в фоновом потоке
+# запускаем бота в фоне
 threading.Thread(target=run_bot_in_thread, daemon=True).start()
 
-# ---- health-check для Render ----
+# health-check для Render
 @app.get("/")
 def health():
     return "ok", 200
